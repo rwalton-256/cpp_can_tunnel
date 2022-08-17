@@ -1,0 +1,6 @@
+[submodule "lib/tcp_server_client_wrapper"]
+	path = lib/tcp_server_client_wrapper
+	url = git@github.com:rwalton-256/tcp_server_client_wrapper.git
+[submodule "lib/socketcan_wrapper_cpp"]
+	path = lib/socketcan_wrapper_cpp
+	url = git@github.com:rwalton-256/socketcan_wrapper_cpp.git
