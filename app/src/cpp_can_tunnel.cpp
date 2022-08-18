@@ -9,50 +9,126 @@
  * 
  */
 
-#include <tcp_server_client_wrapper/server.hpp>
-#include <tcp_server_client_wrapper/client.hpp>
+#include <can_tunnel/tunnel.hpp>
 
-#include <csignal>
 #include <iostream>
-#include <functional>
-#include <cstring>
 
-#include <netdb.h>
-
-std::condition_variable cv;
-
-int main()
+namespace can_tunnel
 {
-    tcp_wrapper::Server server( 5005 );
 
-    struct hostent* server_name;
-    in_addr server_addr;
-    server_name = gethostbyname( "localhost" );
+Tunnel::Tunnel()
+    :
+    _mState( State_Uninit ),
+    _mCanRxThread( [&](){ _mCanRxFunc(); } ),
+    _mTcpRxThread( [&](){ _mTcpRxFunc(); } )
+{
 
-    memcpy( &server_addr, server_name->h_addr, sizeof( server_addr ) );
-
-    tcp_wrapper::Client client( server_addr, 5005 );
-
-    server.wait_for_connection( std::chrono::seconds( 15 ) );
-
-    std::cout << "Attempting write..." << std::endl;
-
-    client.write( (void*)"Hello world\n", 12 );
-
-    std::cout << "Attempting read..." << std::endl;
-
-    char buf[5];
-    buf[4] = '\0';
-    std::cout << server.read( buf, 4 ) << std::endl;
-    std::cout << buf << std::endl;
-
-    signal( SIGINT, []( int signal ){ cv.notify_one(); } );
-
-    std::mutex m;
-    std::unique_lock<std::mutex> ul( m );
-    cv.wait( ul );
-    std::cout << std::endl;
-
-    return 0;
 }
 
+void Tunnel::_mCanRxFunc()
+{
+    std::cout << "CanRxFunc" << std::endl;
+
+    {
+        std::unique_lock<std::mutex> ul( _mMutex );
+        _mStateCv.wait( ul, [&](){ return _mState.load() != State_Uninit; } );
+    }
+
+    std::cout << "Tunnel Entering Can Rx Loop" << std::endl;
+    while( _mState.load() != State_Shutdown )
+    {
+        if( _mTcpEpPtr->wait_for_connection( std::chrono::seconds( 1 ) ) )
+        {
+            can_frame f;
+            try
+            {
+                _mCanWrapperPtr->receive_frame( f );
+            }
+            catch( const SocketCAN_Wrapper::Timeout& )
+            {
+                continue;
+            }
+            std::cout << "Can Received Frame" << std::endl;
+            _mTcpEpPtr->write( &f, sizeof( f ) );
+        }
+    }
+}
+
+void Tunnel::_mTcpRxFunc()
+{
+    std::cout << "TcpRxFunc" << std::endl;
+
+    {
+        std::unique_lock<std::mutex> ul( _mMutex );
+        _mStateCv.wait( ul, [&](){ return _mState.load() != State_Uninit; } );
+    }
+
+    std::cout << "Tunnel Entering Tcp Rx Loop" << std::endl;
+    while( _mState.load() != State_Shutdown )
+    {
+        if( _mTcpEpPtr->wait_for_connection( std::chrono::seconds( 1 ) ) )
+        {
+            can_frame f;
+            try
+            {
+                _mTcpEpPtr->read( &f, sizeof( f ) );
+            }
+            catch( const tcp_wrapper::Endpoint::Timeout& )
+            {
+                continue;
+            }
+            std::cout << "Tcp received frame" << std::endl;
+            _mCanWrapperPtr->send_frame( f );
+        }
+    }
+}
+
+ServerTunnel::ServerTunnel( const std::string& _aCanIface, in_port_t _aPort )
+    :
+    _mCanWrapper( _aCanIface, std::chrono::milliseconds( 10 ) ),
+    _mTcpServer( _aPort, std::chrono::milliseconds( 10 ) )
+{
+    _mCanWrapperPtr = &_mCanWrapper;
+    _mTcpEpPtr = &_mTcpServer;
+
+    _mState.store( State_Init );
+    _mStateCv.notify_all();
+
+    std::cout << "Server Tunnel Init Complete" << std::endl;
+}
+
+ServerTunnel::~ServerTunnel()
+{
+    std::cout << "Destroying Server Tunnel..." << std::endl;
+    _mState.store( State_Shutdown );
+    _mStateCv.notify_all();
+
+    _mCanRxThread.join();
+    _mTcpRxThread.join();
+}
+
+ClientTunnel::ClientTunnel( const std::string& _aCanIface, in_addr _aAddr, in_port_t _aPort )
+    :
+    _mCanWrapper( _aCanIface, std::chrono::milliseconds( 10 ) ),
+    _mTcpClient( _aAddr, _aPort, std::chrono::milliseconds( 10 ) )
+{
+    _mCanWrapperPtr = &_mCanWrapper;
+    _mTcpEpPtr = &_mTcpClient;
+
+    _mState.store( State_Init );
+    _mStateCv.notify_all();
+
+    std::cout << "Client Tunnel Init Complete" << std::endl;
+}
+
+ClientTunnel::~ClientTunnel()
+{
+    std::cout << "Destroying Client Tunnel..." << std::endl;
+    _mState.store( State_Shutdown );
+    _mStateCv.notify_all();
+
+    _mCanRxThread.join();
+    _mTcpRxThread.join();
+}
+
+};//can_tunnel
