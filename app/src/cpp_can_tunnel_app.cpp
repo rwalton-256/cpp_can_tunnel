@@ -48,7 +48,7 @@ int main( int argc, char** argv )
         // Client
         struct hostent* server_name;
         in_addr server_addr;
-        server_name = gethostbyname( "localhost" );
+        server_name = gethostbyname( argv[3] );
 
         memcpy( &server_addr, server_name->h_addr, sizeof( server_addr ) );
 

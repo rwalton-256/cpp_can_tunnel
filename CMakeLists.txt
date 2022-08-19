@@ -3,6 +3,8 @@ cmake_minimum_required (VERSION 2.8.11)
 
 project(cpp_can_tunnel)
 
+add_compile_options(-std=c++11)
+
 add_subdirectory( lib )
 
 find_package(Threads REQUIRED)
@@ -34,4 +36,9 @@ add_executable(
 target_link_libraries(
     can_tunnel_test
     cpp_can_tunnel
+)
+
+install(
+    TARGETS can_tunnel
+    DESTINATION bin
 )
